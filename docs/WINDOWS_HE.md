@@ -2,7 +2,7 @@
 
 ## הורדת תוכנה מוכנה
 
-ב-GitHub פתחי Actions ובחרי ריצה מוצלחת של **Windows installer**. תחת Artifacts הורידי **TypesetOK-Windows-x64** (נדרשת כניסה ל-GitHub), חלצי את ה-ZIP והפעילי `TypesetOK-0.1.0-Windows-x64-Setup.exe`.
+ב-GitHub פתחי Actions ובחרי ריצה מוצלחת של **Windows installer**. תחת Artifacts הורידי **TypesetOK-Windows-x64** (נדרשת כניסה ל-GitHub), חלצי את ה-ZIP והפעילי `TypesetOK-0.2.0-Windows-x64-Setup.exe`.
 
 בחרי תיקיית התקנה, השלימי את האשף ופתחי את TypesetOK דרך קיצור הדרך. אין צורך ב-Node.js או Rust במחשב שבו מתקינים. הבנייה מיועדת ל-Windows במעבד x64. הקובץ אינו חתום בתעודת מפתח מסחרית, ולכן Windows עשוי להציג אזהרת מפרסם לא מוכר; בדקי שמקור הקובץ הוא הריצה שבמאגר שלך. SHA256 מצורף לאימות שלמות ההורדה.
 
@@ -19,6 +19,6 @@ npm run package:win
 
 ## מה נארז
 
-המתקין כולל את עורך הטיוטות המקומי ומעטפת Electron. הוא אינו כולל עדיין חיבור למנוע Rust או תמיכה בפתיחת קובצי `.tok`. הוא שומר `.tokdraft`, פותח TXT ומייצא HTML וטקסט. PDF מופק דרך חלון ההדפסה. מנוע Chromium המצורף ל-Electron מגדיל את משקל התוכנה ביחס לקובץ HTML העצמאי.
+המתקין כולל את עורך הטיוטות המקומי ומעטפת Electron. הוא אינו כולל עדיין חיבור למנוע Rust או תמיכה בפתיחת קובצי `.tok`. הוא שומר `.tokdoc`, מייבא `.tokdraft`, פותח TXT ומייצא HTML וטקסט. PDF מופק דרך חלון ההדפסה. מנוע Chromium המצורף ל-Electron מגדיל את משקל התוכנה ביחס לקובץ HTML העצמאי.
 
 הבנייה אוטומטית בכל עדכון ל-Pull Request ובדחיפה ל-main. לאחר מיזוג ה-workflow ל-main ניתן להפעילו גם דרך Run workflow. לא מתבצע פרסום אוטומטי כ-Release ציבורי.

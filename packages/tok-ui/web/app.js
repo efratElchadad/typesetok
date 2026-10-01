@@ -1,46 +1,1132 @@
-import {MAX_TEXT,defaults,sample,validateDraft,stats,countMatches,transform,History} from './model.js';
-const $=id=>document.getElementById(id), editor=$('editor'), key='typesetok.draft.v1';
-let draft={format:'tokdraft',version:1,title:'הסיפור הבא שלי',text:sample,settings:{...defaults}}, history, zoom=.75, timer, saveTimer, toastTimer, dirty=false, composing=false, lastInput=0, rendered=0, previewLimited=false;
-let printStyle=document.createElement('style');document.head.append(printStyle);
-function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,3200);}
-try{const saved=localStorage.getItem(key);if(saved)draft=validateDraft(JSON.parse(saved));document.body.classList.toggle('dark',localStorage.getItem('typesetok.theme')==='dark');}catch{setTimeout(()=>toast('לא ניתן לשחזר טיוטה מקומית. אפשר לפתוח קובץ שמור.'),100);}
-function readText(){draft.text=editor.value;draft.title=$('title').value||'מסמך חדש';}
-function persist(){clearTimeout(saveTimer);readText();try{localStorage.setItem(key,JSON.stringify(draft));$('save-state').textContent='טיוטה נשמרה במכשיר · '+new Date().toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'});}catch{$('save-state').textContent='שמירה מקומית נכשלה — שמרי קובץ';}}
-function changed(){dirty=true;$('save-state').textContent='שומר טיוטה…';clearTimeout(saveTimer);saveTimer=setTimeout(persist,700);schedule();}
-function sync(){editor.value=draft.text;$('title').value=draft.title;for(const [id,value]of Object.entries(draft.settings)){if(typeof value==='boolean')$(id).checked=value;else $(id).value=String(value);}editor.dir=draft.settings.direction;history=new History(draft.text);render();}
-function schedule(){clearTimeout(timer);timer=setTimeout(render,180);}
-function updateHistory(){history.push(editor.value);$('undo').disabled=history.index===0;$('redo').disabled=history.index===history.items.length-1;}
-function replaceSelection(text,all=false){const start=all?0:editor.selectionStart,end=all?editor.value.length:editor.selectionEnd;if(editor.value.length-(end-start)+text.length>MAX_TEXT){toast('המגבלה היא 500,000 תווים למסמך');return;}history.push(editor.value);editor.setRangeText(text,start,end,'end');history.push(editor.value);lastInput=0;changed();editor.focus();}
-function dimensions(){const [w,h]={A4:[210,297],A5:[148,210],Letter:[216,279]}[draft.settings.paper];return draft.settings.orientation==='landscape'?[h,w]:[w,h];}
-function pageNode(text,index,maxBlocks=Infinity){const s=draft.settings,[w,h]=dimensions(),page=document.createElement('article');page.className='page'+(s.guides?' guides':'');page.dir=s.direction;Object.assign(page.style,{width:w+'mm',minHeight:h+'mm',padding:s.margin+'mm',fontFamily:s.font,fontSize:s.size+'pt',lineHeight:String(s.leading),textAlign:s.align});page.style.setProperty('--spacing',s.spacing+'px');page.style.setProperty('--indent',s.indent?'1.5em':'0');page.style.setProperty('--margin',s.margin+'mm');
- for(const block of text.split(/\n\s*\n/u).slice(0,maxBlocks)){if(!block.trim())continue;for(const segment of block.split(/\n(?=#{1,2} )/u)){let tag='p',content=segment;if(/^## /u.test(content)){tag='h2';content=content.slice(3);}else if(/^# /u.test(content)){tag='h1';content=content.slice(2);}const node=document.createElement(tag);node.textContent=content;page.append(node);}}
- if(s.numbers){const folio=document.createElement('div');folio.className='folio';folio.textContent=String(index+1);page.append(folio);}return page;}
-function render(){readText();const values=stats(draft.text),pages=draft.text.split(/^---\s*$/m);$('stats').textContent=`${values.words.toLocaleString('he-IL')} מילים · ${values.characters.toLocaleString('he-IL')} תווים · ${pages.length} מקטעי עמוד · כ־${Math.max(1,Math.ceil(values.words/200))} דק׳ קריאה`;
- // The preview intentionally mounts at most 12 sections. Export uses all sections.
- previewLimited=pages.length>12||draft.text.length>30000||pages.some(text=>text.split(/\n\s*\n/u).length>300);let budget=30000;const fragment=document.createDocumentFragment();pages.slice(0,12).forEach((text,i)=>{if(budget<=0)return;const clipped=text.slice(0,budget);budget-=clipped.length;fragment.append(pageNode(clipped,i,300));});$('preview').replaceChildren(fragment);rendered=Math.min(12,pages.length);if(previewLimited){const notice=document.createElement('p');notice.textContent='תצוגה מקוצרת למסמך ארוך כדי לשמור על ביצועים. ייצוא HTML כולל את כל הטקסט.';$('preview').append(notice);}
- $('preview').style.zoom=String(zoom);$('zoom-label').textContent=Math.round(zoom*100)+'%';editor.dir=draft.settings.direction;
- const outline=document.createDocumentFragment();let offset=0;for(const line of draft.text.split('\n')){if(/^#{1,2} /u.test(line)&&outline.childNodes.length<100){const button=document.createElement('button'),position=offset;button.textContent=line.replace(/^#+ /,'');button.addEventListener('click',()=>{editor.focus();editor.setSelectionRange(position,position+line.length);});outline.append(button);}offset+=line.length+1;}$('outline').replaceChildren(outline);$('matches').textContent=$('query').value?countMatches(draft.text,$('query').value)+' התאמות':'';$('undo').disabled=history.index===0;$('redo').disabled=history.index===history.items.length-1;printStyle.textContent=`@page { size: ${draft.settings.paper} ${draft.settings.orientation}; margin: ${draft.settings.margin}mm; }`;}
-function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);}
-function filename(ext){return (draft.title.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,100)||'document')+ext;}
-function exportHtml(){readText();const doc=document.implementation.createHTMLDocument(draft.title);doc.documentElement.lang='he';doc.documentElement.dir=draft.settings.direction;const meta=doc.createElement('meta');meta.setAttribute('charset','utf-8');doc.head.prepend(meta);const policy=doc.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";doc.head.append(policy);const style=doc.createElement('style');style.textContent=`body{margin:0;background:#eee}.page{box-sizing:border-box;background:white;margin:20px auto;overflow-wrap:anywhere;break-after:page}.page p{white-space:pre-wrap;margin:0 0 var(--spacing);text-indent:var(--indent)}.folio{text-align:center;margin-top:30px}h1,h2{break-after:avoid}.page:last-child{break-after:auto}@page{size:${draft.settings.paper} ${draft.settings.orientation};margin:${draft.settings.margin}mm}@media print{body{background:white}.page{margin:0;width:auto!important;min-height:0!important;padding:0!important}}`;doc.head.append(style);draft.text.split(/^---\s*$/m).forEach((text,i)=>doc.body.append(pageNode(text,i)));return '<!doctype html>\n'+doc.documentElement.outerHTML;}
-function findNext(){const q=$('query').value;if(!q)return toast('כתבי טקסט לחיפוש');let pos=editor.value.indexOf(q,editor.selectionEnd);if(pos<0)pos=editor.value.indexOf(q);if(pos<0)return toast('לא נמצאו התאמות');editor.focus();editor.setSelectionRange(pos,pos+q.length);$('matches').textContent=countMatches(editor.value,q)+' התאמות';}
-const actions={
- new(){clearTimeout(editor.historyTimer);if(dirty&&!confirm('להתחיל מסמך חדש? ודאי ששמרת עותק של המסמך הנוכחי.'))return;draft={format:'tokdraft',version:1,title:'מסמך חדש',text:'',settings:{...defaults}};sync();dirty=true;persist();editor.focus();},
- open(){$('file').click();},save(){readText();download(filename('.tokdraft'),JSON.stringify(draft,null,2),'application/json');dirty=false;persist();toast('קובץ הטיוטה הוכן להורדה');},txt(){readText();download(filename('.txt'),draft.text,'text/plain;charset=utf-8');},html(){download(filename('.html'),exportHtml(),'text/html;charset=utf-8');},
- print(){render();if(previewLimited){toast('למסמך ארוך: ייצאי HTML, פתחי אותו והדפיסי משם כדי לכלול את כל העמודים.');return;}document.body.classList.remove('focus');window.print();},
- undo(){updateHistory();editor.value=history.undo();changed();render();},redo(){editor.value=history.redo();changed();render();},search(){$('search-panel').hidden=!$('search-panel').hidden;if(!$('search-panel').hidden)$('query').focus();},find:findNext,
- replace(){const q=$('query').value;if(!q)return;if(editor.value.slice(editor.selectionStart,editor.selectionEnd)===q)replaceSelection($('replacement').value);findNext();},replaceAll(){const q=$('query').value;if(!q)return;const n=countMatches(editor.value,q);if(n===0)return toast('לא נמצאו התאמות');const replacement=$('replacement').value;if(editor.value.length+n*(replacement.length-q.length)>MAX_TEXT)return toast('התוצאה חורגת ממגבלת גודל המסמך');replaceSelection(editor.value.split(q).join(replacement),true);toast(`הוחלפו ${n} מופעים`);},
- focus(){document.body.classList.toggle('focus');},theme(){document.body.classList.toggle('dark');try{localStorage.setItem('typesetok.theme',document.body.classList.contains('dark')?'dark':'light');}catch{}},help(){$('help').showModal();},closeHelp(){$('help').close();},selectAll(){editor.focus();editor.select();},
- zoomIn(){zoom=Math.min(1.5,zoom+.1);schedule();},zoomOut(){zoom=Math.max(.3,zoom-.1);schedule();},zoomReset(){zoom=.75;schedule();},fit(){zoom=Math.max(.3,Math.min(1.5,($('preview-scroll').clientWidth-50)/(dimensions()[0]*96/25.4)));schedule();},
- heading(){replaceSelection('# '+editor.value.slice(editor.selectionStart,editor.selectionEnd));},subheading(){replaceSelection('## '+editor.value.slice(editor.selectionStart,editor.selectionEnd));},pagebreak(){replaceSelection('\n\n---\n\n');},maqaf(){replaceSelection('־');},gershayim(){replaceSelection('״');},nbsp(){replaceSelection('\u00a0');},date(){replaceSelection(new Date().toLocaleDateString('he-IL'));},
- template(){const presets={article:{size:14,leading:1.8,paper:'A4',align:'justify',indent:false},book:{size:12,leading:1.6,paper:'A5',align:'justify',indent:true},poem:{size:16,leading:2,paper:'A5',align:'center',indent:false},letter:{size:13,leading:1.7,paper:'A4',align:'right',indent:false}};readText();Object.assign(draft.settings,presets[$('template').value]);for(const[id,value]of Object.entries(draft.settings)){if(typeof value==='boolean')$(id).checked=value;else $(id).value=String(value);}changed();toast('סגנון התבנית הוחל על המסמך');}
+import {
+  defaults,
+  sample,
+  stats,
+  countMatches,
+  transform,
+  History,
+  cleanHTML,
+  textToHTML,
+  plainText,
+  studioDocument,
+} from "./model.js";
+const $ = (id) => document.getElementById(id),
+  editor = $("editor");
+const icons = {
+  sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1",
+  focus: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5",
+  download: "M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5",
+  help: "M9 8a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 4h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20",
+  undo: "M8 5 3 10l5 5M3 10h11a6 6 0 0 1 0 12",
+  redo: "M16 5l5 5-5 5m5-5H10a6 6 0 0 0 0 12",
+  eraser: "m9 4-7 9 7 7h5l8-10-7-7zM6 9l9 8M9 20h13",
+  highlight: "m15 3 6 6-9 9H6v-6zM3 21h18",
+  "align-right": "M3 5h18M9 10h12M3 15h18M9 20h12",
+  "align-left": "M3 5h18M3 10h12M3 15h18M3 20h12",
+  "align-center": "M3 5h18M6 10h12M3 15h18M6 20h12",
+  "align-justify": "M3 5h18M3 10h18M3 15h18M3 20h18",
+  list: "M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1",
+  ordered: "M9 5h12M9 12h12M9 19h12M3 3v4m-1 5c3-3 4 1 0 3h3",
+  indent: "M3 4h18M10 10h11M10 15h11M3 21h18m0-12 4 4-4 4",
+  outdent: "M3 4h18M10 10h11M10 15h11M3 21h18M7 9l-4 4 4 4",
+  search: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14m5 12 6 6",
+  history: "M3 11a9 9 0 1 1 2 7M3 4v7h7m2-4v6l4 2",
+  table: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18",
+  plus: "M12 4v16M4 12h16",
+  minus: "M4 12h16",
+  trash: "M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
+  pages: "M5 3h14v7M5 14v7h14v-7M2 12h20",
+  type: "M3 4h18M12 4v17m-4 0h8",
+  calendar: "M3 5h18v16H3zM7 2v6m10-6v6M3 10h18",
+  check: "m4 12 5 5L20 6",
+  folder: "M3 5h7l2 3h9v12H3z",
+  copy: "M8 8h13v13H8zM16 8V3H3v13h5",
+  fit: "M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6M8 12h8",
+  printer: "M6 8V3h12v5M6 17H3V9h18v8h-3M6 14h12v7H6z",
+  close: "m5 5 14 14M5 19 19 5",
+  shield: "m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6z",
+  code: "m8 5-6 7 6 7m8-14 6 7-6 7m-3-17-2 20",
+  file: "M5 2h9l5 5v15H5zM14 2v6h5M8 12h8M8 16h8",
 };
-for(const action of ['normalize','spaces','niqqud','marks'])actions[action]=()=>{const selected=editor.selectionStart!==editor.selectionEnd;replaceSelection(transform(selected?editor.value.slice(editor.selectionStart,editor.selectionEnd):editor.value,action),!selected);};
-document.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(button)actions[button.dataset.action]?.();});
-editor.addEventListener('paste',event=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();replaceSelection(text);});
-editor.maxLength=MAX_TEXT;editor.addEventListener('compositionstart',()=>composing=true);editor.addEventListener('compositionend',()=>{composing=false;updateHistory();changed();});editor.addEventListener('beforeinput',()=>{if(Date.now()-lastInput>600)history.push(editor.value);});editor.addEventListener('input',()=>{lastInput=Date.now();if(!composing){changed();clearTimeout(editor.historyTimer);editor.historyTimer=setTimeout(updateHistory,600);}});editor.addEventListener('select',()=>{$('selection-stats').textContent=editor.selectionEnd>editor.selectionStart?`${editor.selectionEnd-editor.selectionStart} תווים בבחירה`:'';});
-$('title').addEventListener('input',changed);$('spell').addEventListener('change',()=>editor.spellcheck=$('spell').checked);$('query').addEventListener('input',()=>{$('matches').textContent=countMatches(editor.value,$('query').value)+' התאמות';});
-for(const[id,value]of Object.entries(defaults))$(id).addEventListener('change',()=>{const next=typeof value==='boolean'?$(id).checked:typeof value==='number'?Number($(id).value):$(id).value;try{draft=validateDraft({...draft,settings:{...draft.settings,[id]:next}});changed();}catch{toast('ערך מחוץ לטווח');$(id).value=String(draft.settings[id]);}});
-$('file').addEventListener('change',async()=>{const file=$('file').files[0];if(!file)return;try{if(file.size>4_000_000)throw Error('הקובץ גדול מדי — עד 4 MB');const raw=await file.text();const loaded=file.name.toLowerCase().endsWith('.txt')?validateDraft({format:'tokdraft',version:1,title:file.name.slice(0,-4).slice(0,120),text:raw,settings:{...defaults}}):validateDraft(JSON.parse(raw));if(dirty&&!confirm('לפתוח קובץ אחר? ודאי ששמרת עותק של המסמך הנוכחי.'))return;draft=loaded;clearTimeout(editor.historyTimer);sync();dirty=false;persist();toast('המסמך נפתח');}catch(error){toast(error.message||'לא ניתן לפתוח את הקובץ');}finally{$('file').value='';}});
-document.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('focus');if(!(event.ctrlKey||event.metaKey)||event.altKey)return;const key=event.key.toLowerCase();const action={s:'save',o:'open',f:'search',z:event.shiftKey?'redo':'undo',y:'redo'}[key];if(action){if(['undo','redo'].includes(action)&&event.target!==editor)return;event.preventDefault();clearTimeout(editor.historyTimer);actions[action]();}});
-window.addEventListener('beforeunload',event=>{persist();if(dirty){event.preventDefault();event.returnValue='';}});document.addEventListener('visibilitychange',()=>{if(document.hidden)persist();});sync();
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(svg.namespaceURI, "path");
+  p.setAttribute("d", icons[name] || icons.file);
+  svg.append(p);
+  return svg;
+}
+for (const el of document.querySelectorAll("[data-icon]"))
+  el.prepend(icon(el.dataset.icon));
+const storageKey = "typesetok.studio.v1";
+let collection = [],
+  current = "",
+  draft,
+  history,
+  savedRange = null,
+  dirty = false,
+  zoom = 0.9,
+  saveTimer,
+  renderTimer,
+  toastTimer,
+  typingTimer,
+  composing = false,
+  lastInput = 0;
+let savedToFile = false,
+  storageLocked = false;
+const printStyle = document.createElement("style");
+document.head.append(printStyle);
+const newId = () =>
+  globalThis.crypto?.randomUUID?.() ||
+  Date.now().toString(36) + Math.random().toString(36).slice(2);
+function newDocument(title = "מסמך חדש", html = "<p><br></p>") {
+  return studioDocument({
+    format: "tokdoc",
+    version: 1,
+    title,
+    html,
+    settings: { ...defaults, align: "right" },
+    notes: "",
+    goal: 1000,
+  });
+}
+const welcome =
+  '<h1>לכל מילה<br>יש מקום.</h1><p><span style="color:#8895a9">מחברת רעיונות · מהדורה ראשונה</span></p><p>כתיבה טובה מתחילה במרחב שמאפשר לה להתרחש. דף שמחכה למחשבה הראשונה, קצב בין השורות, ומקום לכל מה שעוד יבוא.</p><h2>לחשוב דרך המילים</h2><p>זהו מסמך חי. אפשר לערוך אותו ישירות, לבחור מילה ולהדגיש, להוסיף כותרת או לבנות טבלה. הכלים סביב הדף מאפשרים לעצב את התוכן ולהישאר קרובים אליו.</p><blockquote>״אין צורך לדעת מראש את כל הסיפור.<br>לפעמים מספיק למצוא את המשפט הראשון.״</blockquote><h2>בונים את הפרק הבא</h2><p>בצד ימין נמצאים המסמכים והמתאר. בצד שמאל — סגנונות, הערות ונקודות שחזור. שמרי נקודה לפני שינוי גדול, וחזרי אליה כשצריך.</p><ul><li>בחרי סגנון שייתן למסמך אופי.</li><li>הוסיפי מחשבה, רעיון או התחלה של פרק.</li><li>שמרי עותק לקובץ כדי לקחת אותו איתך.</li></ul>';
+function toast(message) {
+  $("toast").textContent = message;
+  $("toast").hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($("toast").hidden = true), 3500);
+}
+function capture() {
+  draft.title = $("title").value || "מסמך ללא שם";
+  draft.html = cleanHTML(editor.innerHTML);
+  draft.notes = $("notes").value;
+  const goal = Number($("goal").value);
+  draft.goal =
+    Number.isInteger(goal) && goal >= 0 && goal <= 100000 ? goal : 1000;
+  return draft;
+}
+function historyState() {
+  return JSON.stringify({
+    html: cleanHTML(editor.innerHTML),
+    settings: draft.settings,
+  });
+}
+function checkpoint() {
+  history.push(historyState());
+  updateUndo();
+}
+function updateUndo() {
+  $("undo").disabled = history.index === 0;
+  $("redo").disabled = history.index === history.items.length - 1;
+}
+function persist() {
+  clearTimeout(saveTimer);
+  try {
+    if (storageLocked) throw Error("האחסון הישן לא נטען");
+    capture();
+    const item = collection.find((d) => d.id === current);
+    if (item) {
+      item.doc = structuredClone(draft);
+      item.updated = Date.now();
+    }
+    const serialized = JSON.stringify({ current, documents: collection });
+    if (serialized.length > 3500000) throw Error("אחסון מלא");
+    localStorage.setItem(storageKey, serialized);
+    $("save-state").textContent =
+      "נשמר במכשיר · " +
+      new Date().toLocaleTimeString("he-IL", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    dirty = false;
+  } catch {
+    dirty = true;
+    $("save-state").textContent = "הטיוטה לא נשמרה במכשיר — שמרי קובץ";
+  }
+  renderDocuments();
+}
+function changed() {
+  dirty = true;
+  savedToFile = false;
+  $("save-state").textContent = "שומר שינויים…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persist, 700);
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(refresh, 180);
+}
+function dimensions() {
+  const [w, h] = { A4: [210, 297], A5: [148, 210], Letter: [216, 279] }[
+    draft.settings.paper
+  ];
+  return draft.settings.orientation === "landscape" ? [h, w] : [w, h];
+}
+function applyStyle() {
+  for (const [id, value] of Object.entries(draft.settings)) {
+    if ($(id)) {
+      if (typeof value === "boolean") $(id).checked = value;
+      else $(id).value = String(value);
+    }
+  }
+  const s = draft.settings,
+    [w, h] = dimensions(),
+    paper = document.querySelector(".paper");
+  Object.assign(paper.style, {
+    width: w + "mm",
+    minHeight: h + "mm",
+    padding: s.margin + "mm",
+  });
+  paper.style.setProperty("--spacing", s.spacing + "px");
+  paper.style.setProperty("--indent", s.indent ? "1.5em" : "0");
+  paper.classList.toggle("guides", s.guides);
+  Object.assign(editor.style, {
+    fontFamily: s.font,
+    fontSize: s.size + "pt",
+    lineHeight: String(s.leading),
+    textAlign: s.align,
+  });
+  editor.dir = s.direction;
+  paper.dir = s.direction;
+  $("folio").hidden = !s.numbers;
+  $("paper-stack").style.zoom = String(zoom);
+  $("zoom-label").textContent = Math.round(zoom * 100) + "%";
+  printStyle.textContent = `@page{size:${s.paper} ${s.orientation};margin:${s.margin}mm}`;
+}
+function sync() {
+  clearTimeout(typingTimer);
+  editor.innerHTML = draft.html;
+  $("title").value = draft.title;
+  $("notes").value = draft.notes;
+  $("goal").value = draft.goal;
+  for (const [id, value] of Object.entries(draft.settings)) {
+    if (!$(id)) continue;
+    if (typeof value === "boolean") $(id).checked = value;
+    else $(id).value = String(value);
+  }
+  history = new History(historyState());
+  savedRange = null;
+  applyStyle();
+  refresh();
+  renderDocuments();
+  renderSnapshots();
+}
+function safeOpen(id) {
+  persist();
+  if (dirty && !confirm("השמירה המקומית נכשלה. לעבור בכל זאת?")) return;
+  const item = collection.find((d) => d.id === id);
+  if (!item) return;
+  current = id;
+  draft = studioDocument(item.doc);
+  sync();
+  persist();
+}
+function renderDocuments() {
+  const frag = document.createDocumentFragment();
+  for (const item of collection) {
+    const button = document.createElement("button");
+    button.className = "doc-card" + (item.id === current ? " active" : "");
+    const thumb = document.createElement("span");
+    thumb.className = "doc-thumbnail";
+    thumb.append(icon("file"));
+    const text = document.createElement("span"),
+      name = document.createElement("strong"),
+      info = document.createElement("small");
+    name.textContent = item.id === current ? draft.title : item.doc.title;
+    info.textContent =
+      new Date(item.updated).toLocaleDateString("he-IL") + " · מסמך";
+    text.append(name, info);
+    button.append(thumb, text);
+    button.addEventListener("click", () => safeOpen(item.id));
+    frag.append(button);
+  }
+  $("documents").replaceChildren(frag);
+}
+function refresh() {
+  const text = editor.innerText;
+  const s = stats(text);
+  $("stats").textContent =
+    `${s.words.toLocaleString("he-IL")} מילים · ${s.characters.toLocaleString("he-IL")} תווים · ${editor.querySelectorAll("table").length} טבלאות`;
+  $("word-count").textContent = s.words.toLocaleString("he-IL");
+  const goal = Number($("goal").value) || 0;
+  const percent = goal ? Math.round((s.words / goal) * 100) : 0;
+  $("goal-progress").value = Math.min(100, percent);
+  $("goal-percent").textContent = goal ? percent + "%" : "ללא יעד";
+  $("breadcrumb").textContent = $("title").value;
+  $("running-title").textContent = $("title").value;
+  const frag = document.createDocumentFragment();
+  for (const el of [...editor.querySelectorAll("h1,h2,h3")].slice(0, 100)) {
+    const button = document.createElement("button");
+    button.dataset.level = el.tagName.slice(1);
+    button.textContent = el.textContent;
+    button.addEventListener("click", () => {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      setRange(r);
+    });
+    frag.append(button);
+  }
+  if (!frag.childNodes.length) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "כותרות המסמך יופיעו כאן. בחרי פסקה והחילי סגנון כותרת.";
+    frag.append(p);
+  }
+  $("outline").replaceChildren(frag);
+  $("matches").textContent = $("query").value
+    ? countMatches(editor.textContent, $("query").value) + " התאמות"
+    : "";
+  updateUndo();
+}
+function renderSnapshots() {
+  const frag = document.createDocumentFragment();
+  for (const point of collection.find((d) => d.id === current)?.snapshots ||
+    []) {
+    const button = document.createElement("button");
+    button.textContent =
+      new Date(point.time).toLocaleString("he-IL") + " — שחזור";
+    button.addEventListener("click", () => {
+      if (!confirm("לשחזר את התוכן והעיצוב מנקודה זו? אפשר לבטל את השחזור."))
+        return;
+      checkpoint();
+      const restored = studioDocument(point.doc);
+      draft.settings = restored.settings;
+      editor.innerHTML = restored.html;
+      for (const [id, value] of Object.entries(draft.settings)) {
+        if ($(id)) {
+          if (typeof value === "boolean") $(id).checked = value;
+          else $(id).value = String(value);
+        }
+      }
+      checkpoint();
+      applyStyle();
+      changed();
+      toast("נקודת השחזור נטענה");
+    });
+    frag.append(button);
+  }
+  $("snapshots").replaceChildren(frag);
+}
+function selectionInEditor() {
+  const sel = window.getSelection();
+  return (
+    sel?.rangeCount &&
+    editor.contains(sel.anchorNode) &&
+    editor.contains(sel.focusNode)
+  );
+}
+function remember() {
+  if (selectionInEditor())
+    savedRange = window.getSelection().getRangeAt(0).cloneRange();
+}
+function setRange(range) {
+  editor.focus();
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  savedRange = range.cloneRange();
+}
+function restore() {
+  editor.focus();
+  if (savedRange && editor.contains(savedRange.commonAncestorContainer))
+    setRange(savedRange);
+  else {
+    const r = document.createRange();
+    r.selectNodeContents(editor);
+    r.collapse(false);
+    setRange(r);
+  }
+}
+function transact(command, value = null) {
+  checkpoint();
+  restore();
+  document.execCommand(command, false, value);
+  remember();
+  checkpoint();
+  changed();
+}
+function insert(html) {
+  const safe = cleanHTML(html);
+  if (editor.innerHTML.length + safe.length > 500000)
+    return toast("המסמך הגיע למגבלת הגודל");
+  transact("insertHTML", safe);
+}
+function modal(title, content) {
+  $("modal-title").textContent = title;
+  $("modal-body").replaceChildren(content);
+  $("modal").showModal();
+}
+function closeModal() {
+  $("modal").close();
+}
+function textElement(tag, text) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  return el;
+}
+function download(extension, content, type) {
+  const name =
+      (draft.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 100) ||
+        "document") + extension,
+    url = URL.createObjectURL(new Blob([content], { type })),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+function addDocument(doc) {
+  if (collection.length >= 10)
+    return toast("עד 10 מסמכים מקומיים. שמרי קובץ ומחקי טיוטה שאינך צריכה.");
+  persist();
+  if (dirty && !confirm("השמירה המקומית נכשלה. לעבור בכל זאת?")) return;
+  current = newId();
+  draft = doc;
+  collection.push({
+    id: current,
+    doc: structuredClone(doc),
+    updated: Date.now(),
+    snapshots: [],
+  });
+  sync();
+  changed();
+  persist();
+}
+function activeCell() {
+  restore();
+  let node = window.getSelection()?.anchorNode;
+  const el = node?.nodeType === 1 ? node : node?.parentElement;
+  const cell = el?.closest("td,th");
+  return cell && editor.contains(cell) ? cell : null;
+}
+function tableEdit(action) {
+  checkpoint();
+  const cell = activeCell();
+  if (!cell) return toast("מקמי את הסמן בתוך תא בטבלה");
+  const table = cell.closest("table"),
+    row = cell.closest("tr");
+  if (action === "row") {
+    if (table.rows.length >= 30) return toast("עד 30 שורות בטבלה");
+    const added = table.insertRow(row.rowIndex + 1);
+    for (let i = 0; i < row.cells.length; i++)
+      added.insertCell().append(document.createElement("br"));
+  }
+  if (action === "column") {
+    if (row.cells.length >= 10) return toast("עד 10 עמודות בטבלה");
+    for (const r of table.rows) {
+      const c = r.insertCell(Math.min(cell.cellIndex + 1, r.cells.length));
+      c.append(document.createElement("br"));
+    }
+  }
+  if (action === "deleteRow") {
+    if (table.rows.length === 1) table.remove();
+    else row.remove();
+  }
+  if (action === "deleteTable") table.remove();
+  savedRange = null;
+  checkpoint();
+  changed();
+}
+function textNodes() {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
+  while ((node = walker.nextNode())) nodes.push(node);
+  return nodes;
+}
+function findNext() {
+  const q = $("query").value;
+  if (!q) return toast("הקלידי טקסט לחיפוש");
+  const nodes = textNodes(),
+    text = nodes.map((n) => n.textContent).join("");
+  let start = 0;
+  if (savedRange && editor.contains(savedRange.endContainer)) {
+    for (const node of nodes) {
+      if (node === savedRange.endContainer) {
+        start += savedRange.endOffset;
+        break;
+      }
+      start += node.length;
+    }
+  }
+  let pos = text.indexOf(q, start);
+  if (pos < 0) pos = text.indexOf(q);
+  if (pos < 0) return toast("לא נמצאו התאמות");
+  let offset = 0,
+    a,
+    b;
+  for (const node of nodes) {
+    if (!a && pos < offset + node.length) a = [node, pos - offset];
+    if (pos + q.length <= offset + node.length) {
+      b = [node, pos + q.length - offset];
+      break;
+    }
+    offset += node.length;
+  }
+  if (a && b) {
+    const r = document.createRange();
+    r.setStart(...a);
+    r.setEnd(...b);
+    setRange(r);
+    a[0].parentElement.scrollIntoView({ block: "center" });
+  }
+  refresh();
+}
+function replaceAll() {
+  const q = $("query").value,
+    rep = $("replacement").value;
+  if (!q) return;
+  const n = countMatches(editor.textContent, q);
+  if (editor.innerHTML.length + n * Math.max(0, rep.length - q.length) > 500000)
+    return toast("התוצאה גדולה מדי");
+  checkpoint();
+  let replaced = 0;
+  for (const node of textNodes()) {
+    replaced += countMatches(node.textContent, q);
+    node.textContent = node.textContent.split(q).join(rep);
+  }
+  savedRange = null;
+  checkpoint();
+  changed();
+  toast(
+    `הוחלפו ${replaced} מופעים. ביטוי שחוצה עיצובים שונים אפשר להחליף דרך ״הבא״.`,
+  );
+}
+function exportHTML() {
+  capture();
+  const doc = document.implementation.createHTMLDocument(draft.title);
+  doc.documentElement.lang = "he";
+  doc.documentElement.dir = draft.settings.direction;
+  const meta = doc.createElement("meta");
+  meta.charset = "utf-8";
+  doc.head.append(meta);
+  const policy = doc.createElement("meta");
+  policy.httpEquiv = "Content-Security-Policy";
+  policy.content =
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'";
+  doc.head.append(policy);
+  const style = doc.createElement("style");
+  const [w, h] = dimensions(),
+    s = draft.settings;
+  style.textContent = `body{font-family:${s.font};font-size:${s.size}pt;line-height:${s.leading};text-align:${s.align};padding:${s.margin}mm;margin:auto;max-width:${w}mm;color:#25364b}p{margin:0 0 ${s.spacing}px;text-indent:${s.indent ? "1.5em" : "0"}}h1{font-size:2.4em;line-height:1.3}h2{font-size:1.35em}blockquote{border-inline-start:3px solid #9aabd8;padding:10px 20px;background:#f6f8fd}table{border-collapse:collapse;width:100%;table-layout:fixed}td,th{border:1px solid #cad4e2;padding:9px}th{background:#f0f3fa}.page-break{break-after:page;border:0}@page{size:${s.paper} ${s.orientation};margin:${s.margin}mm}@media print{body{padding:0;max-width:none}h1,h2{break-after:avoid}p{orphans:3;widows:3}}`;
+  doc.head.append(style);
+  doc.body.innerHTML = cleanHTML(draft.html);
+  return "<!doctype html>\n" + doc.documentElement.outerHTML;
+}
+const actions = {
+  new: () => addDocument(newDocument()),
+  open: () => $("file").click(),
+  save() {
+    capture();
+    download(
+      ".tokdoc",
+      JSON.stringify(studioDocument(draft), null, 2),
+      "application/json",
+    );
+    savedToFile = true;
+    persist();
+    toast("קובץ המסמך הוכן להורדה");
+  },
+  duplicate() {
+    capture();
+    addDocument(
+      studioDocument({
+        ...draft,
+        title: (draft.title + " — עותק").slice(0, 120),
+      }),
+    );
+  },
+  deleteDocument() {
+    if (
+      !confirm(
+        "למחוק את הטיוטה המקומית ונקודות השחזור שלה? קבצים שהורדת לא יימחקו.",
+      )
+    )
+      return;
+    clearTimeout(saveTimer);
+    collection = collection.filter((d) => d.id !== current);
+    if (!collection.length) {
+      current = newId();
+      draft = newDocument();
+      collection.push({
+        id: current,
+        doc: draft,
+        updated: Date.now(),
+        snapshots: [],
+      });
+    } else {
+      current = collection[0].id;
+      draft = studioDocument(collection[0].doc);
+    }
+    sync();
+    persist();
+  },
+  undo() {
+    clearTimeout(typingTimer);
+    checkpoint();
+    const state = JSON.parse(history.undo());
+    draft.settings = state.settings;
+    editor.innerHTML = state.html;
+    applyStyle();
+    changed();
+    updateUndo();
+  },
+  redo() {
+    clearTimeout(typingTimer);
+    const state = JSON.parse(history.redo());
+    draft.settings = state.settings;
+    editor.innerHTML = state.html;
+    applyStyle();
+    changed();
+    updateUndo();
+  },
+  clear() {
+    transact("removeFormat");
+  },
+  highlight() {
+    transact("hiliteColor", "#fff1b0");
+  },
+  snapshot() {
+    capture();
+    const item = collection.find((d) => d.id === current);
+    item.snapshots.unshift({ time: Date.now(), doc: structuredClone(draft) });
+    item.snapshots = item.snapshots.slice(0, 5);
+    persist();
+    renderSnapshots();
+    toast(dirty ? "השמירה המקומית נכשלה — שמרי קובץ" : "נקודת השחזור נשמרה");
+  },
+  search() {
+    $("search-panel").hidden = !$("search-panel").hidden;
+    if (!$("search-panel").hidden) $("query").focus();
+  },
+  find: findNext,
+  replace() {
+    restore();
+    if (
+      $("query").value &&
+      window.getSelection().toString() === $("query").value
+    )
+      transact("insertText", $("replacement").value);
+    findNext();
+  },
+  replaceAll,
+  table() {
+    const box = document.createElement("div");
+    for (const [id, label, max, value] of [
+      ["rows", "שורות", 30, 3],
+      ["cols", "עמודות", 10, 3],
+    ]) {
+      const l = textElement("label", label),
+        input = document.createElement("input");
+      input.id = id;
+      input.type = "number";
+      input.min = 1;
+      input.max = max;
+      input.value = value;
+      l.append(input);
+      box.append(l);
+    }
+    const button = textElement("button", "הוספת טבלה");
+    button.className = "save-button";
+    button.onclick = () => {
+      const rows = Number($("rows").value),
+        cols = Number($("cols").value);
+      if (
+        !Number.isInteger(rows) ||
+        !Number.isInteger(cols) ||
+        rows < 1 ||
+        rows > 30 ||
+        cols < 1 ||
+        cols > 10
+      )
+        return toast("טבלה: 1–30 שורות, 1–10 עמודות");
+      const table = document.createElement("table");
+      for (let r = 0; r < rows; r++) {
+        const row = table.insertRow();
+        for (let c = 0; c < cols; c++) {
+          const cell = document.createElement(r === 0 ? "th" : "td");
+          cell.append(document.createElement("br"));
+          row.append(cell);
+        }
+      }
+      closeModal();
+      insert(table.outerHTML + "<p><br></p>");
+    };
+    box.append(button);
+    modal("טבלה חדשה", box);
+  },
+  row: () => tableEdit("row"),
+  column: () => tableEdit("column"),
+  deleteRow: () => tableEdit("deleteRow"),
+  deleteTable: () => tableEdit("deleteTable"),
+  pagebreak: () => insert('<hr class="page-break"><p><br></p>'),
+  rule: () => insert("<hr><p><br></p>"),
+  date: () => transact("insertText", new Date().toLocaleDateString("he-IL")),
+  symbols() {
+    const box = document.createElement("div");
+    box.className = "symbol-grid";
+    for (const ch of [
+      "־",
+      "״",
+      "׳",
+      "–",
+      "—",
+      "…",
+      "•",
+      "©",
+      "®",
+      "™",
+      "§",
+      "†",
+      "₪",
+      "€",
+      "£",
+      "½",
+      "¼",
+      "¾",
+      "←",
+      "→",
+      "↑",
+      "↓",
+      "✓",
+      "∞",
+    ]) {
+      const button = textElement("button", ch);
+      button.onclick = () => {
+        closeModal();
+        transact("insertText", ch);
+      };
+      box.append(button);
+    }
+    modal("תווים מיוחדים", box);
+  },
+  focus() {
+    document.body.classList.toggle("focus");
+    setTimeout(actions.fit, 0);
+  },
+  theme() {
+    document.body.classList.toggle("dark");
+    try {
+      localStorage.setItem(
+        "typesetok.studio.theme",
+        document.body.classList.contains("dark") ? "dark" : "light",
+      );
+    } catch {}
+  },
+  zoomIn() {
+    zoom = Math.min(1.5, zoom + 0.1);
+    applyStyle();
+  },
+  zoomOut() {
+    zoom = Math.max(0.35, zoom - 0.1);
+    applyStyle();
+  },
+  zoomReset() {
+    zoom = 0.9;
+    applyStyle();
+  },
+  fit() {
+    zoom = Math.min(
+      1,
+      Math.max(
+        0.35,
+        ($("document-scroll").clientWidth - 70) /
+          ((dimensions()[0] * 96) / 25.4),
+      ),
+    );
+    applyStyle();
+  },
+  txt() {
+    capture();
+    download(".txt", plainText(draft.html), "text/plain;charset=utf-8");
+  },
+  html() {
+    download(".html", exportHTML(), "text/html;charset=utf-8");
+  },
+  print() {
+    applyStyle();
+    window.print();
+  },
+  closeModal,
+  proof() {
+    const box = document.createElement("div"),
+      issues = [],
+      text = editor.innerText;
+    if (!text.trim()) issues.push("המסמך ריק.");
+    if (!editor.querySelector("h1")) issues.push("לא הוגדרה כותרת ראשית.");
+    if (/ {2,}/.test(text))
+      issues.push("נמצאו רווחים כפולים. אפשר לנקות דרך כלי הסקירה.");
+    if (
+      [...editor.querySelectorAll("p")].some((p) => p.textContent.length > 1000)
+    )
+      issues.push("יש פסקאות ארוכות מ־1,000 תווים. כדאי לבדוק את הקריאות.");
+    if (!issues.length) issues.push("לא נמצאו בעיות בבדיקות המבנה הבסיסיות.");
+    for (const issue of issues) box.append(textElement("p", issue));
+    box.append(
+      textElement(
+        "p",
+        "זו בדיקת מבנה בסיסית. היא אינה בדיקת לשון או אישור מוכנות לדפוס.",
+      ),
+    );
+    modal("בדיקת מסמך", box);
+  },
+  help() {
+    const box = document.createElement("div");
+    for (const text of [
+      "Ctrl / ⌘ + S — שמירת קובץ מסמך",
+      "Ctrl / ⌘ + O — פתיחת מסמך",
+      "Ctrl / ⌘ + K — חיפוש פעולה",
+      "Ctrl / ⌘ + F — חיפוש והחלפה",
+      "Ctrl / ⌘ + Z — ביטול; Shift + Z — שחזור",
+      "Ctrl / ⌘ + B / I / U — מודגש, נטוי וקו תחתון",
+      "Esc — יציאה ממצב ריכוז",
+      "אפשר לפתוח גם טיוטות .tokdraft מהגרסה הקודמת. קובצי .tok של ליבת Rust עדיין אינם נתמכים.",
+      "העיצוב בחלונית הפריסה משפיע על כל המסמך. עיצוב דרך כלי הטקסט חל על הבחירה.",
+      "המקומות בדף מתרחבים בהתאם לתוכן. חלוקת דפי ההדפסה נעשית בחלון ההדפסה.",
+    ])
+      box.append(textElement("p", text));
+    modal("עבודה עם Studio", box);
+  },
+  palette() {
+    const box = document.createElement("div"),
+      input = document.createElement("input"),
+      list = document.createElement("div");
+    input.placeholder = "מה תרצי לעשות?";
+    input.setAttribute("aria-label", "חיפוש פעולה");
+    list.className = "command-list";
+    const commands = {
+      new: "מסמך חדש",
+      open: "פתיחת קובץ",
+      save: "שמירת מסמך",
+      duplicate: "שכפול מסמך",
+      snapshot: "נקודת שחזור",
+      table: "הוספת טבלה",
+      pagebreak: "מעבר מקטע",
+      search: "חיפוש והחלפה",
+      proof: "בדיקת מסמך",
+      html: "ייצוא HTML",
+      txt: "ייצוא טקסט",
+      print: "הדפסה / PDF",
+      theme: "החלפת מראה",
+      focus: "מצב ריכוז",
+      symbols: "תווים מיוחדים",
+    };
+    const draw = () => {
+      list.replaceChildren();
+      for (const [id, label] of Object.entries(commands))
+        if (label.includes(input.value)) {
+          const b = textElement("button", label);
+          b.onclick = () => {
+            closeModal();
+            actions[id]();
+          };
+          list.append(b);
+        }
+    };
+    input.oninput = draw;
+    box.append(input, list);
+    draw();
+    modal("פעולות מהירות", box);
+    input.focus();
+  },
+};
+for (const action of ["spaces", "normalize", "niqqud", "marks"])
+  actions[action] = () => {
+    restore();
+    const selected = window.getSelection().toString();
+    if (selected) {
+      transact("insertText", transform(selected, action));
+      return;
+    }
+    checkpoint();
+    for (const node of textNodes())
+      node.textContent = transform(node.textContent, action);
+    checkpoint();
+    changed();
+  };
+function activateTab(name) {
+  for (const button of document.querySelectorAll("[data-tab]"))
+    button.classList.toggle("active", button.dataset.tab === name);
+  for (const group of document.querySelectorAll(".ribbon"))
+    group.hidden = group.id !== "ribbon-" + name;
+}
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("button") && !event.target.closest("#editor")) {
+    remember();
+    if (event.target.closest("[data-command],[data-block]"))
+      event.preventDefault();
+  }
+});
+document.addEventListener("click", (event) => {
+  const el = event.target.closest("button");
+  if (!el) return;
+  try {
+    if (el.dataset.action) actions[el.dataset.action]?.();
+    if (el.dataset.command) transact(el.dataset.command);
+    if (el.dataset.block) transact("formatBlock", el.dataset.block);
+    if (el.dataset.tab) activateTab(el.dataset.tab);
+    if (el.dataset.panel) {
+      for (const name of ["documents", "outline"])
+        $(name + "-panel").hidden = name !== el.dataset.panel;
+      document
+        .querySelectorAll("[data-panel]")
+        .forEach((b) => b.classList.toggle("active", b === el));
+    }
+    if (el.dataset.inspect) {
+      for (const name of ["design", "notes", "history"])
+        $("inspect-" + name).hidden = name !== el.dataset.inspect;
+      document
+        .querySelectorAll("[data-inspect]")
+        .forEach((b) => b.classList.toggle("active", b === el));
+    }
+    if (el.dataset.preset) {
+      checkpoint();
+      Object.assign(
+        draft.settings,
+        {
+          editorial: {
+            font: "serif",
+            size: 14,
+            leading: 1.8,
+            spacing: 12,
+            align: "right",
+            indent: false,
+          },
+          book: {
+            font: "serif",
+            size: 12,
+            leading: 1.65,
+            spacing: 9,
+            align: "justify",
+            indent: true,
+          },
+          modern: {
+            font: "sans-serif",
+            size: 13,
+            leading: 1.85,
+            spacing: 16,
+            align: "right",
+            indent: false,
+          },
+          poem: {
+            font: "serif",
+            size: 16,
+            leading: 2,
+            spacing: 20,
+            align: "center",
+            indent: false,
+          },
+        }[el.dataset.preset],
+      );
+      for (const [id, value] of Object.entries(draft.settings)) {
+        if ($(id)) {
+          if (typeof value === "boolean") $(id).checked = value;
+          else $(id).value = value;
+        }
+      }
+      applyStyle();
+      checkpoint();
+      changed();
+      document
+        .querySelectorAll("[data-preset]")
+        .forEach((b) => b.classList.toggle("active", b === el));
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+});
+document.addEventListener("selectionchange", () => {
+  if (!selectionInEditor()) return;
+  remember();
+  const selection = window.getSelection();
+  $("selection-stats").textContent = selection.toString()
+    ? selection.toString().length + " תווים בבחירה"
+    : "";
+  let el = selection.anchorNode?.parentElement;
+  $("active-style").textContent = el?.closest("h1,h2,h3")
+    ? "כותרת"
+    : el?.closest("td,th")
+      ? "תא בטבלה"
+      : "טקסט רגיל";
+  for (const b of document.querySelectorAll("[data-command]"))
+    try {
+      b.setAttribute(
+        "aria-pressed",
+        String(document.queryCommandState(b.dataset.command)),
+      );
+    } catch {}
+});
+editor.addEventListener("beforeinput", () => {
+  if (!composing && Date.now() - lastInput > 600) checkpoint();
+});
+editor.addEventListener("compositionstart", () => (composing = true));
+editor.addEventListener("compositionend", () => {
+  composing = false;
+  checkpoint();
+  changed();
+});
+editor.addEventListener("input", () => {
+  if (composing) return;
+  lastInput = Date.now();
+  try {
+    if (editor.innerHTML.length > 500000) throw Error("המסמך גדול מדי");
+  } catch (error) {
+    editor.innerHTML = JSON.parse(history.items[history.index]).html;
+    toast(error.message);
+    return;
+  }
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(checkpoint, 600);
+  changed();
+});
+editor.addEventListener("paste", (event) => {
+  event.preventDefault();
+  try {
+    const html = event.clipboardData?.getData("text/html"),
+      text = event.clipboardData?.getData("text/plain") || "";
+    remember();
+    insert(html || textToHTML(text));
+  } catch (error) {
+    toast(error.message);
+  }
+});
+editor.addEventListener("drop", (event) => event.preventDefault());
+for (const [id, value] of Object.entries(defaults)) {
+  if (!$(id)) continue;
+  $(id).addEventListener("change", () => {
+    try {
+      checkpoint();
+      const next =
+        typeof value === "boolean"
+          ? $(id).checked
+          : typeof value === "number"
+            ? Number($(id).value)
+            : $(id).value;
+      draft = studioDocument({
+        ...capture(),
+        settings: { ...draft.settings, [id]: next },
+      });
+      applyStyle();
+      checkpoint();
+      changed();
+    } catch (error) {
+      toast(error.message);
+      $(id).value = draft.settings[id];
+    }
+  });
+}
+$("ink").addEventListener("input", () => transact("foreColor", $("ink").value));
+$("spell").addEventListener(
+  "change",
+  () => (editor.spellcheck = $("spell").checked),
+);
+for (const id of ["title", "notes", "goal"])
+  $(id).addEventListener("input", changed);
+$("query").addEventListener("input", refresh);
+$("file").addEventListener("change", async () => {
+  const file = $("file").files[0];
+  if (!file) return;
+  try {
+    if (file.size > 2000000) throw Error("הקובץ גדול מדי — עד 2MB");
+    const raw = await file.text();
+    const doc = file.name.toLowerCase().endsWith(".txt")
+      ? newDocument(file.name.slice(0, -4).slice(0, 120), textToHTML(raw))
+      : studioDocument(JSON.parse(raw));
+    addDocument(doc);
+  } catch (error) {
+    toast(error.message || "פתיחת הקובץ נכשלה");
+  } finally {
+    $("file").value = "";
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    document.body.classList.remove("focus");
+    return;
+  }
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+  const key = event.key.toLowerCase(),
+    action = {
+      s: "save",
+      o: "open",
+      k: "palette",
+      f: "search",
+      z: event.shiftKey ? "redo" : "undo",
+      y: "redo",
+    }[key];
+  if (action) {
+    if (
+      ["undo", "redo"].includes(action) &&
+      !editor.contains(event.target) &&
+      event.target !== editor
+    )
+      return;
+    event.preventDefault();
+    clearTimeout(typingTimer);
+    actions[action]();
+  }
+});
+window.addEventListener("beforeunload", (event) => {
+  persist();
+  if (dirty) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) persist();
+});
+try {
+  const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+  if (saved?.documents?.length) {
+    collection = saved.documents
+      .slice(0, 10)
+      .map((item) => ({
+        id: String(item.id),
+        doc: studioDocument(item.doc),
+        updated: Number(item.updated) || Date.now(),
+        snapshots: (Array.isArray(item.snapshots) ? item.snapshots : [])
+          .slice(0, 5)
+          .map((point) => ({
+            time: Number(point.time) || Date.now(),
+            doc: studioDocument(point.doc),
+          })),
+      }));
+    current = collection.some((d) => d.id === saved.current)
+      ? saved.current
+      : collection[0].id;
+    draft = studioDocument(collection.find((d) => d.id === current).doc);
+  } else {
+    const legacy = localStorage.getItem("typesetok.draft.v1");
+    draft = legacy
+      ? studioDocument(JSON.parse(legacy))
+      : newDocument("מחברת רעיונות", welcome);
+  }
+  document.body.classList.toggle(
+    "dark",
+    localStorage.getItem("typesetok.studio.theme") === "dark",
+  );
+} catch {
+  storageLocked = true;
+  draft = newDocument("מחברת רעיונות", welcome);
+  setTimeout(
+    () =>
+      toast(
+        "לא ניתן לטעון את הספרייה המקומית. הנתונים הישנים לא נמחקו; אפשר לפתוח קובץ גיבוי.",
+      ),
+    100,
+  );
+}
+if (!collection.length) {
+  current = newId();
+  collection.push({
+    id: current,
+    doc: draft,
+    updated: Date.now(),
+    snapshots: [],
+  });
+}
+sync();
+setTimeout(actions.fit, 30);
