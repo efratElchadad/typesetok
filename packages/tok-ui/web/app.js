@@ -224,7 +224,13 @@ function safeOpen(id) {
 }
 function renderDocuments() {
   const frag = document.createDocumentFragment();
-  for (const item of collection) {
+  const query = $("library-query").value.trim().toLocaleLowerCase("he");
+  const items = collection.filter(item => {
+    const doc = item.id === current ? capture() : item.doc;
+    return (doc.title + " " + plainText(doc.html)).toLocaleLowerCase("he").includes(query);
+  }).sort((a, b) => $("library-sort").value === "title"
+    ? a.doc.title.localeCompare(b.doc.title, "he") : b.updated - a.updated);
+  for (const item of items) {
     const button = document.createElement("button");
     button.className = "doc-card" + (item.id === current ? " active" : "");
     const thumb = document.createElement("span");
@@ -241,6 +247,8 @@ function renderDocuments() {
     button.addEventListener("click", () => safeOpen(item.id));
     frag.append(button);
   }
+  if (!items.length) frag.append(textElement("p", "לא נמצאו מסמכים התואמים לחיפוש."));
+  $("library-count").textContent = `${items.length} מתוך ${collection.length} מסמכים`;
   $("documents").replaceChildren(frag);
 }
 function refresh() {
@@ -515,7 +523,51 @@ function exportHTML() {
   doc.body.innerHTML = cleanHTML(draft.html);
   return "<!doctype html>\n" + doc.documentElement.outerHTML;
 }
+const templates = [
+  ["מאמר", "כתיבה ועריכה", "תקציר|מבוא|גוף המאמר|סיכום", "serif"],
+  ["פרק בספר", "כתיבה ועריכה", "פתיחה|התפתחות|מחשבות לסיום", "serif"],
+  ["דף לימוד", "לימוד", "נושא הלימוד|מקורות|שאלות לעיון|סיכום", "serif"],
+  ["מערך שיעור", "לימוד", "מטרות|ציוד והכנה|פתיחה|מהלך השיעור|הערכה", "sans-serif"],
+  ["סיכום פגישה", "עבודה", "משתתפים|נושאים לדיון|החלטות|משימות להמשך", "sans-serif"],
+  ["הצעת פרויקט", "עבודה", "רקע וצורך|מטרות|תכולת העבודה|לוח זמנים|מדדי הצלחה", "sans-serif"],
+  ["מכתב רשמי", "עבודה", "לכבוד|הנדון|תוכן המכתב|בברכה", "serif"],
+  ["יומן כתיבה", "כתיבה ועריכה", "המחשבה של היום|רעיונות|הצעד הבא", "serif"],
+];
 const actions = {
+  templates() {
+    const box = document.createElement("div");
+    box.append(textElement("p", "התחילי ממבנה מוכן. כל תבנית נפתחת כמסמך חדש."));
+    const grid = document.createElement("div"); grid.className = "template-grid";
+    for (const [name, category, headings, font] of templates) {
+      const button = document.createElement("button"); button.className = "template-card";
+      button.append(textElement("small", category), textElement("strong", name), textElement("span", headings.replaceAll("|", " · ")));
+      button.onclick = () => {
+        const doc = newDocument(name, `<h1>${name}</h1>` + headings.split("|").map(h => `<h2>${h}</h2><p><br></p>`).join(""));
+        doc.settings.font = font;
+        closeModal(); addDocument(doc);
+      };
+      grid.append(button);
+    }
+    box.append(grid); modal("גלריית תבניות", box);
+  },
+  backup() {
+    capture();
+    const documents = collection.map(item => ({...item, doc: structuredClone(item.id === current ? draft : item.doc)}));
+    download(".toklibrary", JSON.stringify({format:"toklibrary", version:1, documents}), "application/json");
+    toast("הגיבוי כולל מסמכים, הערות ונקודות שחזור");
+  },
+  restoreLibrary() { $("library-file").click(); },
+  readingStats() {
+    const box = document.createElement("div"), value = stats(editor.innerText);
+    for (const line of [
+      `${value.words} מילים`, `${value.characters} תווים`,
+      `${editor.querySelectorAll("p").length} פסקאות`,
+      `${editor.querySelectorAll("h1,h2,h3").length} כותרות`,
+      `${editor.querySelectorAll("table").length} טבלאות`,
+      `זמן קריאה משוער: ${Math.max(1, Math.ceil(value.words / 200))} דקות (לפי 200 מילים בדקה)`,
+    ]) box.append(textElement("p", line));
+    modal("נתוני המסמך", box);
+  },
   new: () => addDocument(newDocument()),
   open: () => $("file").click(),
   save() {
@@ -798,6 +850,10 @@ const actions = {
     list.className = "command-list";
     const commands = {
       new: "מסמך חדש",
+      templates: "גלריית תבניות",
+      backup: "גיבוי ספריית המסמכים",
+      restoreLibrary: "שחזור ספרייה מגיבוי",
+      readingStats: "נתוני המסמך וזמן קריאה",
       open: "פתיחת קובץ",
       save: "שמירת מסמך",
       duplicate: "שכפול מסמך",
@@ -1025,6 +1081,36 @@ $("spell").addEventListener(
 for (const id of ["title", "notes", "goal"])
   $(id).addEventListener("input", changed);
 $("query").addEventListener("input", refresh);
+$("library-query").addEventListener("input", renderDocuments);
+$("library-sort").addEventListener("change", renderDocuments);
+$("library-file").addEventListener("change", async () => {
+  const file = $("library-file").files[0];
+  if (!file) return;
+  try {
+    if (file.size > 14000000) throw Error("קובץ הגיבוי גדול מדי");
+    const value = JSON.parse(await file.text());
+    if (value?.format !== "toklibrary" || value.version !== 1 || !Array.isArray(value.documents) || !value.documents.length || value.documents.length > 10)
+      throw Error("זה אינו גיבוי ספרייה תקין");
+    const imported = value.documents.map(item => ({
+      id: newId(), doc: studioDocument(item.doc), updated: Date.now(),
+      snapshots: (Array.isArray(item.snapshots) ? item.snapshots : []).slice(0, 5).map(point => ({
+        time: Number.isFinite(point.time) ? point.time : Date.now(), doc: studioDocument(point.doc)
+      }))
+    }));
+    persist();
+    if (dirty) throw Error("יש שינויים שלא נשמרו. שמרי קובץ לפני שחזור ספרייה.");
+    if (collection.length + imported.length > 10) throw Error("השחזור מוסיף מסמכים. אין מספיק מקום: עד 10 מסמכים בספרייה.");
+    const next = [...collection, ...imported];
+    const serialized = JSON.stringify({current, documents:next});
+    if (serialized.length > 3500000) throw Error("אין מספיק מקום מקומי לשחזור הגיבוי");
+    if (!confirm(`להוסיף ${imported.length} מסמכים מהגיבוי? המסמכים הקיימים יישמרו.`)) return;
+    localStorage.setItem(storageKey, serialized);
+    collection = next;
+    renderDocuments();
+    toast("המסמכים נוספו מהגיבוי בהצלחה");
+  } catch (error) { toast(error.message || "שחזור הגיבוי נכשל"); }
+  finally { $("library-file").value = ""; }
+});
 $("file").addEventListener("change", async () => {
   const file = $("file").files[0];
   if (!file) return;
