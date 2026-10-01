@@ -78,7 +78,11 @@ div.tok-line {{
     }
 
     /// Compiles a list of PageLayoutBoxes into pre-fragmented HTML for Vivliostyle.
-    pub fn compile_to_html(pages: &[PageLayoutBox], page_width_mm: f32, page_height_mm: f32) -> String {
+    pub fn compile_to_html(
+        pages: &[PageLayoutBox],
+        page_width_mm: f32,
+        page_height_mm: f32,
+    ) -> String {
         let mut html = String::new();
         html.push_str("<!DOCTYPE html>\n<html dir=\"rtl\" lang=\"he\">\n<head>\n");
         html.push_str("<meta charset=\"utf-8\">\n");
@@ -98,7 +102,9 @@ div.tok-line {{
 
             html.push_str(&format!(
                 "<div class=\"{}\" data-page-index=\"{}\" data-gematria=\"{}\">\n",
-                page_class, p.page_index, p.page_number_gematria
+                page_class,
+                p.page_index,
+                html_escape(&p.page_number_gematria)
             ));
 
             for frame in &p.frames {
@@ -120,7 +126,7 @@ div.tok-line {{
             // Folio (page number) footer
             html.push_str(&format!(
                 "  <div class=\"tok-folio\" style=\"position: absolute; bottom: 20pt; width: 100%; text-align: center;\">{}</div>\n",
-                p.page_number_gematria
+                html_escape(&p.page_number_gematria)
             ));
 
             html.push_str("</div>\n");
@@ -142,6 +148,24 @@ fn html_escape(s: &str) -> String {
 mod tests {
     use super::*;
     use tok_typeset::geometry::{LineBox, PhysicalRect, TextFrameBox};
+
+    #[test]
+    fn escapes_page_labels_in_attributes_and_text() {
+        let page = PageLayoutBox {
+            page_index: 0,
+            page_number_gematria: "\"><script>alert(1)</script>&".into(),
+            dimensions: PhysicalRect::a4_portrait(),
+            frames: vec![],
+            break_token: None,
+        };
+        let html = HtmlProjectionCompiler::compile_to_html(&[page], 210.0, 297.0);
+        assert!(!html.contains("<script>"));
+        assert_eq!(
+            html.matches("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;")
+                .count(),
+            2
+        );
+    }
 
     #[test]
     fn test_html_projection_containment_rules() {

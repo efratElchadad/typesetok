@@ -119,6 +119,9 @@ fn handle_benchmark(pages_target: usize) -> Result<(), Box<dyn std::error::Error
     println!("================================================================================");
     println!("  TypesetOK (TOK) - Phase 6 Stress Test & Performance Benchmark (Gate 1)");
     println!("================================================================================");
+    if !(1..=10_000).contains(&pages_target) {
+        return Err("Page count must be between 1 and 10000".into());
+    }
     println!("Target Page Count: {}", pages_target);
 
     // Estimate paragraphs needed: ~3-4 paragraphs per page
@@ -153,7 +156,9 @@ fn handle_benchmark(pages_target: usize) -> Result<(), Box<dyn std::error::Error
     let cascade_start = Instant::now();
     // In TOK's architecture, editing a paragraph requires re-breaking only until line count converges
     let mut modified_root = (*doc.root()).clone();
-    let target_para = &mut modified_root.sections[0].main_flow_mut().unwrap().paragraphs[40];
+    let paragraphs = &mut modified_root.sections[0].main_flow_mut().unwrap().paragraphs;
+    let target_index = 40.min(paragraphs.len() - 1);
+    let target_para = &mut paragraphs[target_index];
     target_para.text.push_str(" הֶסְבֵּר נוֹסָף לְפֵרוּשׁ רַשִׁ\"י הַקָּדוֹשׁ.");
 
     // Typeset modified single paragraph
@@ -262,10 +267,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_render_html(&args[2], &args[3])?;
         }
         "benchmark-typeset" => {
-            let mut pages = 1000;
-            if args.len() >= 4 && args[2] == "--pages" {
-                pages = args[3].parse().unwrap_or(1000);
-            }
+            let pages = match &args[2..] {
+                [] => 1000,
+                [flag, value] if flag == "--pages" =>
+                    value.parse().map_err(|_| "Invalid --pages value")?,
+                _ => return Err("Usage: tok-cli benchmark-typeset [--pages N]".into()),
+            };
             handle_benchmark(pages)?;
         }
         "verify-determinism" => {

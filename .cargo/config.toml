@@ -1,8 +1,5 @@
-[http]
-check-revoke = false
-
 [net]
 git-fetch-with-cli = true
 
-[build]
-target-dir = "C:/Users/USER/AppData/Local/tok_target"
+# Use Cargo's portable default target/ directory. Override CARGO_TARGET_DIR
+# locally if needed; do not commit machine-specific paths or TLS exceptions.

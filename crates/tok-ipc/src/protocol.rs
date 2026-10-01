@@ -95,37 +95,91 @@ pub enum IpcEvent {
 pub struct MessageFramer;
 
 impl MessageFramer {
-    pub fn encode_command(cmd: &IpcCommand) -> Result<Vec<u8>, serde_json::Error> {
-        let payload = serde_json::to_vec(cmd)?;
-        let len = (payload.len() as u32).to_le_bytes();
+    /// Maximum serialized message size; applies in both directions.
+    pub const MAX_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+    fn framing_error(message: &str) -> serde_json::Error {
+        serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        ))
+    }
+
+    fn payload(bytes: &[u8]) -> Result<&[u8], serde_json::Error> {
+        let header: [u8; 4] = bytes
+            .get(..4)
+            .ok_or_else(|| Self::framing_error("Missing frame header"))?
+            .try_into()
+            .unwrap();
+        let length = u32::from_le_bytes(header) as usize;
+        if length > Self::MAX_PAYLOAD_BYTES || length != bytes.len() - 4 {
+            return Err(Self::framing_error("Invalid frame length"));
+        }
+        Ok(&bytes[4..])
+    }
+
+    fn frame(payload: Vec<u8>) -> Result<Vec<u8>, serde_json::Error> {
+        if payload.len() > Self::MAX_PAYLOAD_BYTES {
+            return Err(Self::framing_error("Message exceeds size limit"));
+        }
         let mut framed = Vec::with_capacity(4 + payload.len());
-        framed.extend_from_slice(&len);
+        framed.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         framed.extend_from_slice(&payload);
         Ok(framed)
     }
 
+    pub fn encode_command(cmd: &IpcCommand) -> Result<Vec<u8>, serde_json::Error> {
+        let payload = serde_json::to_vec(cmd)?;
+        Self::frame(payload)
+    }
+
     pub fn decode_command(bytes: &[u8]) -> Result<IpcCommand, serde_json::Error> {
-        if bytes.len() >= 4 {
-            serde_json::from_slice(&bytes[4..])
-        } else {
-            serde_json::from_slice(bytes)
-        }
+        serde_json::from_slice(Self::payload(bytes)?)
     }
 
     pub fn encode_event(evt: &IpcEvent) -> Result<Vec<u8>, serde_json::Error> {
         let payload = serde_json::to_vec(evt)?;
-        let len = (payload.len() as u32).to_le_bytes();
-        let mut framed = Vec::with_capacity(4 + payload.len());
-        framed.extend_from_slice(&len);
-        framed.extend_from_slice(&payload);
-        Ok(framed)
+        Self::frame(payload)
     }
 
     pub fn decode_event(bytes: &[u8]) -> Result<IpcEvent, serde_json::Error> {
-        if bytes.len() >= 4 {
-            serde_json::from_slice(&bytes[4..])
-        } else {
-            serde_json::from_slice(bytes)
+        serde_json::from_slice(Self::payload(bytes)?)
+    }
+}
+
+#[cfg(test)]
+mod framing_security_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_incomplete_mismatched_and_concatenated_frames() {
+        let valid =
+            MessageFramer::encode_command(&IpcCommand::QueryGeometry { page_index: 0 }).unwrap();
+        for length in 0..valid.len() {
+            assert!(MessageFramer::decode_command(&valid[..length]).is_err());
         }
+        let mut bad = valid.clone();
+        bad[..4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(MessageFramer::decode_command(&bad).is_err());
+        let mut joined = valid.clone();
+        joined.extend_from_slice(&valid);
+        assert!(MessageFramer::decode_command(&joined).is_err());
+        assert!(MessageFramer::decode_command(&u32::MAX.to_le_bytes()).is_err());
+    }
+
+    #[test]
+    fn event_decoder_validates_length_and_encoder_limits_payloads() {
+        let event = IpcEvent::Error {
+            code: 1,
+            message: "test".into(),
+        };
+        let mut framed = MessageFramer::encode_event(&event).unwrap();
+        framed.push(0);
+        assert!(MessageFramer::decode_event(&framed).is_err());
+        let oversized = IpcEvent::Error {
+            code: 1,
+            message: "x".repeat(MessageFramer::MAX_PAYLOAD_BYTES),
+        };
+        assert!(MessageFramer::encode_event(&oversized).is_err());
     }
 }
