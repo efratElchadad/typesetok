@@ -1,0 +1,38 @@
+name: Windows installer
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run package:win
+      - name: Check packaged entry points and executable
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'release/win-unpacked/TypesetOK.exe')) { throw 'Missing application executable' }
+          if (!(Test-Path 'release/win-unpacked/resources/app.asar')) { throw 'Missing application payload' }
+          if (!(Get-ChildItem 'release/*-Setup.exe')) { throw 'Missing installer' }
+          Get-ChildItem 'release/*-Setup.exe' | Get-FileHash -Algorithm SHA256 | Format-List | Out-File release/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TypesetOK-Windows-x64
+          path: |
+            release/*-Setup.exe
+            release/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
