@@ -14,7 +14,7 @@ jobs:
       - run: npm run build
       - run: npm install --prefix /tmp/tok-browser --no-package-lock playwright@1.58.2
       - run: /tmp/tok-browser/node_modules/.bin/playwright install --with-deps chromium
-      - run: node tests/browser-smoke.cjs && node tests/library-browser.cjs
+      - run: node tests/browser-smoke.cjs && node tests/library-browser.cjs && node tests/studio-tools-browser.cjs
         env:
           TOK_PLAYWRIGHT: /tmp/tok-browser/node_modules/playwright
       - uses: actions/upload-artifact@v4

@@ -84,6 +84,10 @@ export function countMatches(text, query) {
   return count;
 }
 export function transform(text, action) {
+  if (action === "trimLines") return text.replace(/^[ \t]+|[ \t]+$/gm, "");
+  if (action === "removeInvisible") return text.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  if (action === "upperCase") return text.toUpperCase();
+  if (action === "lowerCase") return text.toLowerCase();
   if (action === "normalize") return text.normalize("NFC");
   if (action === "spaces")
     return text

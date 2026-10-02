@@ -1,0 +1,66 @@
+name: Publish Studio Windows downloads
+on:
+  push:
+    branches: [publish/studio-0.4.0]
+permissions:
+  contents: read
+concurrency:
+  group: publish-studio-0.4.0
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - run: npm run build
+      - run: npm install --prefix /tmp/tok-browser --no-package-lock playwright@1.58.2
+      - run: /tmp/tok-browser/node_modules/.bin/playwright install --with-deps chromium
+      - run: node tests/browser-smoke.cjs && node tests/library-browser.cjs && node tests/studio-tools-browser.cjs
+        env:
+          TOK_PLAYWRIGHT: /tmp/tok-browser/node_modules/playwright
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-0.4-browser-checks
+          path: /tmp/typesetok-*.png
+  publish:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run package:win
+      - run: npx --no-install electron-builder --config electron-builder.json --win portable --x64 --publish never
+      - name: Validate and name deliverables
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'release/TypesetOK-0.4.0-Windows-x64-Setup.exe')) { throw 'Missing installer' }
+          if (!(Test-Path 'release/TypesetOK 0.4.0.exe')) { throw 'Missing portable executable' }
+          if (!(Test-Path 'release/win-unpacked/resources/app.asar')) { throw 'Missing app payload' }
+          Move-Item 'release/TypesetOK 0.4.0.exe' 'release/TypesetOK-0.4.0-Windows-x64-Portable.exe'
+          Get-ChildItem 'release/*-Setup.exe','release/*-Portable.exe' | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content release/SHA256.txt
+      - name: Publish requested downloads
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create v0.4.0-studio 'release/TypesetOK-0.4.0-Windows-x64-Setup.exe' 'release/TypesetOK-0.4.0-Windows-x64-Portable.exe' 'release/SHA256.txt' --target '${{ github.sha }}' --title 'TypesetOK Studio 0.4.0 — Windows' --notes-file docs/RELEASE_04_HE.md --prerelease
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

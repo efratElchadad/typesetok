@@ -59,6 +59,31 @@ function icon(name) {
 }
 for (const el of document.querySelectorAll("[data-icon]"))
   el.prepend(icon(el.dataset.icon));
+// Shared labels keep the tool center and keyboard palette in sync.
+const studioTools = {
+  paragraphRTL: ["פסקה מימין לשמאל", "עריכה"],
+  paragraphLTR: ["פסקה משמאל לימין", "עריכה"],
+  superscript: ["כתב עילי", "עריכה"], subscript: ["כתב תחתי", "עריכה"],
+  selectDocument: ["בחירת כל תוכן המסמך", "עריכה"],
+  duplicateParagraph: ["שכפול הפסקה הנוכחית", "עריכה"],
+  moveParagraphUp: ["העברת הפסקה למעלה", "עריכה"],
+  moveParagraphDown: ["העברת הפסקה למטה", "עריכה"],
+  deleteColumn: ["מחיקת עמודה בטבלה", "טבלאות"],
+  headerRow: ["הפיכת שורה לכותרת טבלה", "טבלאות"],
+  tableCSV: ["ייצוא הטבלה הנוכחית ל־CSV", "טבלאות"],
+  toc: ["הוספת תוכן עניינים מכותרות", "מסמך"],
+  outlineTXT: ["ייצוא מתאר כותרות לטקסט", "מסמך"],
+  hebrewDate: ["הוספת תאריך עברי", "מסמך"],
+  nbsp: ["הוספת רווח קשיח", "מסמך"],
+  trimLines: ["ניקוי רווחים בקצות שורות", "ניקוי טקסט"],
+  removeInvisible: ["הסרת תווי רוחב אפס", "ניקוי טקסט"],
+  upperCase: ["אותיות לטיניות גדולות", "ניקוי טקסט"],
+  lowerCase: ["אותיות לטיניות קטנות", "ניקוי טקסט"],
+  readingView: ["תצוגת קריאה בלבד", "תצוגה"],
+  sepia: ["שולחן עבודה בגוון נייר", "תצוגה"],
+  contrast: ["ניגודיות מוגברת", "תצוגה"],
+  compact: ["סרגל כלים קומפקטי", "תצוגה"],
+};
 const storageKey = "typesetok.studio.v1";
 let collection = [],
   current = "",
@@ -298,6 +323,7 @@ function renderSnapshots() {
     button.addEventListener("click", () => {
       if (!confirm("לשחזר את התוכן והעיצוב מנקודה זו? אפשר לבטל את השחזור."))
         return;
+      if (document.body.classList.contains("reading-view")) return toast("חזרי למצב עריכה כדי לשחזר");
       checkpoint();
       const restored = studioDocument(point.doc);
       draft.settings = restored.settings;
@@ -431,6 +457,23 @@ function tableEdit(action) {
   if (action === "deleteRow") {
     if (table.rows.length === 1) table.remove();
     else row.remove();
+  }
+  if (action === "deleteColumn") {
+    if ([...table.querySelectorAll("td,th")].some(c => c.colSpan > 1 || c.rowSpan > 1))
+      return toast("מחיקת עמודה אינה זמינה בטבלה עם תאים ממוזגים");
+    const index = cell.cellIndex;
+    for (const r of [...table.rows]) if (r.cells[index]) r.deleteCell(index);
+    if (![...table.rows].some(r => r.cells.length)) table.remove();
+  }
+  if (action === "headerRow") {
+    for (const c of [...row.cells]) {
+      const replacement = document.createElement("th");
+      replacement.innerHTML = c.innerHTML;
+      replacement.colSpan = c.colSpan; replacement.rowSpan = c.rowSpan;
+      replacement.style.cssText = c.style.cssText;
+      if (c.dir) replacement.dir = c.dir;
+      c.replaceWith(replacement);
+    }
   }
   if (action === "deleteTable") table.remove();
   savedRange = null;
@@ -849,6 +892,8 @@ const actions = {
     input.setAttribute("aria-label", "חיפוש פעולה");
     list.className = "command-list";
     const commands = {
+      ...Object.fromEntries(Object.entries(studioTools).map(([id, [label]]) => [id, label])),
+      tools: "מרכז כלים",
       new: "מסמך חדש",
       templates: "גלריית תבניות",
       backup: "גיבוי ספריית המסמכים",
@@ -876,7 +921,7 @@ const actions = {
           const b = textElement("button", label);
           b.onclick = () => {
             closeModal();
-            actions[id]();
+            runAction(id);
           };
           list.append(b);
         }
@@ -888,7 +933,7 @@ const actions = {
     input.focus();
   },
 };
-for (const action of ["spaces", "normalize", "niqqud", "marks"])
+for (const action of ["spaces", "normalize", "niqqud", "marks", "trimLines", "removeInvisible", "upperCase", "lowerCase"])
   actions[action] = () => {
     restore();
     const selected = window.getSelection().toString();
@@ -897,11 +942,119 @@ for (const action of ["spaces", "normalize", "niqqud", "marks"])
       return;
     }
     checkpoint();
-    for (const node of textNodes())
-      node.textContent = transform(node.textContent, action);
+    const before = editor.innerHTML;
+    for (const node of textNodes()) node.textContent = transform(node.textContent, action);
+    if (editor.innerHTML.length > 500000) {
+      editor.innerHTML = before; savedRange = null;
+      return toast("התוצאה גדולה מדי");
+    }
     checkpoint();
     changed();
   };
+function activeParagraph() {
+  restore();
+  const node = window.getSelection()?.anchorNode;
+  const el = node?.nodeType === 1 ? node : node?.parentElement;
+  const block = el?.closest("p,h1,h2,h3,blockquote,li,td,th");
+  return block && editor.contains(block) ? block : null;
+}
+function editParagraph(action) {
+  const block = activeParagraph();
+  if (!block) return toast("מקמי את הסמן בפסקה");
+  checkpoint();
+  if (action === "paragraphRTL" || action === "paragraphLTR") {
+    block.dir = action === "paragraphRTL" ? "rtl" : "ltr";
+    block.style.textAlign = block.dir === "rtl" ? "right" : "left";
+  } else {
+    if (block.parentElement !== editor) return toast("הפעולה זמינה לפסקה ברמה הראשית בלבד");
+    if (action === "duplicateParagraph") {
+      if (editor.innerHTML.length + block.outerHTML.length > 500000) return toast("המסמך גדול מדי");
+      block.after(block.cloneNode(true));
+    }
+    if (action === "moveParagraphUp" && block.previousElementSibling) block.previousElementSibling.before(block);
+    if (action === "moveParagraphDown" && block.nextElementSibling) block.nextElementSibling.after(block);
+  }
+  const range = document.createRange(); range.selectNodeContents(block); range.collapse(true); setRange(range);
+  checkpoint(); changed();
+}
+for (const action of ["paragraphRTL", "paragraphLTR", "duplicateParagraph", "moveParagraphUp", "moveParagraphDown"])
+  actions[action] = () => editParagraph(action);
+Object.assign(actions, {
+  superscript: () => transact("superscript"), subscript: () => transact("subscript"),
+  selectDocument() { const r = document.createRange(); r.selectNodeContents(editor); setRange(r); },
+  deleteColumn: () => tableEdit("deleteColumn"), headerRow: () => tableEdit("headerRow"),
+  tableCSV() {
+    const cell = activeCell();
+    if (!cell) return toast("מקמי את הסמן בתוך טבלה");
+    const table = cell.closest("table");
+    if ([...table.querySelectorAll("td,th")].some(c => c.colSpan > 1 || c.rowSpan > 1))
+      return toast("ייצוא CSV זמין לטבלה ללא תאים ממוזגים");
+    const rows = [...table.rows].map(r => [...r.cells].map(c => {
+      let value = c.innerText;
+      // Prevent spreadsheet formula interpretation, including leading controls/whitespace.
+      if (/^[\s\u0000-\u001f]*[=+@-]/u.test(value)) value = "'" + value;
+      return '"' + value.replaceAll('"', '""') + '"';
+    }).join(",")).join("\r\n");
+    capture(); download(".csv", "\ufeff" + rows, "text/csv;charset=utf-8");
+  },
+  toc() {
+    const headings = [...editor.querySelectorAll("h1,h2,h3")].slice(0, 100);
+    if (!headings.length) return toast("הוסיפי כותרות למסמך תחילה");
+    const box = document.createElement("div"), label = textElement("p", "תוכן עניינים");
+    const strong = textElement("strong", label.textContent); label.replaceChildren(strong); box.append(label);
+    const list = document.createElement("ul");
+    for (const h of headings) list.append(textElement("li", h.textContent));
+    box.append(list); insert(box.innerHTML);
+    toast("נוסף תוכן עניינים כטקסט; הוא אינו מתעדכן אוטומטית ואינו כולל מספרי עמודים");
+  },
+  outlineTXT() {
+    capture();
+    const text = [...editor.querySelectorAll("h1,h2,h3")].map(h => "#".repeat(Number(h.tagName.slice(1))) + " " + h.textContent).join("\n");
+    download(".outline.txt", text, "text/plain;charset=utf-8");
+  },
+  hebrewDate: () => transact("insertText", new Intl.DateTimeFormat("he-IL-u-ca-hebrew", {dateStyle:"long"}).format(new Date())),
+  nbsp: () => transact("insertText", "\u00a0"),
+  readingView() {
+    const enabled = document.body.classList.toggle("reading-view");
+    editor.contentEditable = String(!enabled);
+    editor.setAttribute("aria-readonly", String(enabled));
+    for (const id of ["title", "notes", "goal"]) $(id).readOnly = enabled;
+    $("reading-banner").hidden = !enabled;
+    toast(enabled ? "מצב קריאה — עריכת תוכן המסמך נעולה" : "חזרת למצב עריכה");
+  },
+  tools() {
+    const box = document.createElement("div"), search = document.createElement("input"), grid = document.createElement("div");
+    box.className = "tools-center"; grid.className = "tools-grid";
+    search.type = "search"; search.placeholder = "חיפוש כלי לפי שם או תחום…"; search.setAttribute("aria-label", "חיפוש במרכז הכלים");
+    const draw = () => {
+      grid.replaceChildren();
+      for (const category of [...new Set(Object.values(studioTools).map(v => v[1]))]) {
+        const matches = Object.entries(studioTools).filter(([, [label, group]]) => group === category && (label + group).includes(search.value.trim()));
+        if (!matches.length) continue;
+        const section = document.createElement("section"); section.append(textElement("h3", category));
+        for (const [id, [label]] of matches) {
+          const b = textElement("button", label); b.dataset.tool = id;
+          b.onclick = () => { closeModal(); runAction(id); };
+          section.append(b);
+        }
+        grid.append(section);
+      }
+      if (!grid.childNodes.length) grid.append(textElement("p", "לא נמצאו כלים תואמים."));
+    };
+    search.oninput = draw; box.append(search, grid); draw(); modal("מרכז הכלים", box); search.focus();
+  },
+});
+for (const mode of ["sepia", "contrast", "compact"]) actions[mode] = () => {
+  document.body.classList.toggle(mode);
+  try { localStorage.setItem("typesetok.studio.view." + mode, String(document.body.classList.contains(mode))); } catch {}
+};
+// Reading mode must block every mutation route, including the command palette and shortcuts.
+const readingActions = new Set(["tools","palette","readingView","sepia","contrast","compact","theme","focus","fit","zoomIn","zoomOut","zoomReset","print","save","txt","html","backup","readingStats","proof","help","search","find","closeModal","outlineTXT","selectDocument"]);
+function runAction(id) {
+  if (document.body.classList.contains("reading-view") && !readingActions.has(id))
+    return toast("חזרי למצב עריכה כדי לשנות את המסמך");
+  actions[id]?.();
+}
 function activateTab(name) {
   for (const button of document.querySelectorAll("[data-tab]"))
     button.classList.toggle("active", button.dataset.tab === name);
@@ -919,7 +1072,9 @@ document.addEventListener("click", (event) => {
   const el = event.target.closest("button");
   if (!el) return;
   try {
-    if (el.dataset.action) actions[el.dataset.action]?.();
+    if (el.dataset.action) runAction(el.dataset.action);
+    if (document.body.classList.contains("reading-view") && (el.dataset.command || el.dataset.block || el.dataset.preset))
+      return toast("חזרי למצב עריכה כדי לשנות את המסמך");
     if (el.dataset.command) transact(el.dataset.command);
     if (el.dataset.block) transact("formatBlock", el.dataset.block);
     if (el.dataset.tab) activateTab(el.dataset.tab);
@@ -1039,6 +1194,7 @@ editor.addEventListener("input", () => {
 });
 editor.addEventListener("paste", (event) => {
   event.preventDefault();
+  if (document.body.classList.contains("reading-view")) return;
   try {
     const html = event.clipboardData?.getData("text/html"),
       text = event.clipboardData?.getData("text/plain") || "";
@@ -1052,6 +1208,7 @@ editor.addEventListener("drop", (event) => event.preventDefault());
 for (const [id, value] of Object.entries(defaults)) {
   if (!$(id)) continue;
   $(id).addEventListener("change", () => {
+    if (document.body.classList.contains("reading-view")) { applyStyle(); return; }
     try {
       checkpoint();
       const next =
@@ -1073,7 +1230,7 @@ for (const [id, value] of Object.entries(defaults)) {
     }
   });
 }
-$("ink").addEventListener("input", () => transact("foreColor", $("ink").value));
+$("ink").addEventListener("input", () => { if (!document.body.classList.contains("reading-view")) transact("foreColor", $("ink").value); });
 $("spell").addEventListener(
   "change",
   () => (editor.spellcheck = $("spell").checked),
@@ -1151,7 +1308,7 @@ document.addEventListener("keydown", (event) => {
       return;
     event.preventDefault();
     clearTimeout(typingTimer);
-    actions[action]();
+    runAction(action);
   }
 });
 window.addEventListener("beforeunload", (event) => {
@@ -1215,4 +1372,8 @@ if (!collection.length) {
   });
 }
 sync();
+for (const mode of ["sepia", "contrast", "compact"]) {
+  try { document.body.classList.toggle(mode, localStorage.getItem("typesetok.studio.view." + mode) === "true"); } catch {}
+}
+for (const b of document.querySelectorAll("button[title]")) if (!b.hasAttribute("aria-label")) b.setAttribute("aria-label", b.title);
 setTimeout(actions.fit, 30);
