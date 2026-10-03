@@ -1,22 +1,21 @@
 {
   "name": "typesetok-monorepo",
-  "version": "0.4.0",
+  "version": "0.1.0",
   "private": true,
   "description": "TypesetOK (TOK) - Professional Hebrew Desktop Publishing System",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "node scripts/build-web.mjs",
-    "build:desktop": "npm run build && npm run build --workspace tok-electron",
-    "start": "electron packages/tok-electron/dist/main.js",
-    "test:ui": "node --test tests/editor-model.test.mjs",
-    "test": "npm run test:ui",
-    "package:win": "npm run build:desktop && node scripts/prepare-desktop.mjs && electron-builder --config electron-builder.json --win --x64 --publish never"
+    "build:ts": "tsc --build",
+    "bundle:ui": "esbuild packages/tok-ui/src/renderer.ts --bundle --outfile=packages/tok-ui/dist/renderer.js --platform=browser --target=es2022 && node -e \"fs.copyFileSync('packages/tok-ui/src/index.html', 'packages/tok-ui/dist/index.html')\"",
+    "build": "npm run build:ts && npm run bundle:ui",
+    "test": "node --test test/frontend.test.mjs",
+    "start": "electron packages/tok-electron/dist/main.js"
   },
   "devDependencies": {
-    "electron": "44.5.1",
-    "electron-builder": "26.15.3",
+    "electron": "^29.1.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.4.0"
   }
 }
