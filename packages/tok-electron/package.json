@@ -1,6 +1,6 @@
 {
   "name": "tok-electron",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc"
@@ -11,6 +11,7 @@
     "tok-canvas": "*"
   },
   "devDependencies": {
+    "electron": "^29.1.0",
     "typescript": "^5.4.0"
   }
 }
